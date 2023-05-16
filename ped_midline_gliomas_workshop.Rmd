@@ -1,0 +1,304 @@
+---
+title: "Infercnv Notebook"
+output: html_notebook
+---
+
+
+Code to install infercnv from BioConductor
+```{r, eval=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#
+## The following initializes usage of Bioc devel
+#BiocManager::install(version='devel')
+#
+#BiocManager::install("infercnv")
+```
+
+Code to update infercnv from Github. 
+```{r, eval=FALSE}
+# devtools::install_github("broadinstitute/infercnv")
+```
+
+
+Load infercnv and Seurat libraries in your R session. The detach() command is only needed so that your current R session updates the version in use if the package was already loaded but an update has been installed.
+```{r}
+if ("infercnv" %in% names(sessionInfo()$otherPkgs)) {
+    detach("package:infercnv", unload=T)
+}
+library(infercnv)
+library(Seurat)
+```
+
+Set working directory to data folder and output path
+```{r}
+# setwd("")
+setwd("~/work/infercnv_workshop")
+output_dir = "output_dir"
+```
+
+
+Create the infercnv object from a Seurat object and gene position file.
+```{r}
+# help:
+# ?CreateInfercnvObject
+
+# load the Seurat object from disk
+ped_midline_gliomas_seurat = readRDS("input_data/ped_midline_gliomas_seurat.rds")
+
+infercnv_obj = CreateInfercnvObject(raw_counts_matrix=GetAssayData(ped_midline_gliomas_seurat, "counts"),
+                                    annotations_file=as.matrix(ped_midline_gliomas_seurat@active.ident),
+                                    delim="\t",
+                                    gene_order_file="input_data/gencode_v19_gene_pos.txt",
+                                    ref_group_names=c("Oligodendrocyte", "Immune cell"))
+```
+
+
+Create the infercnv object from files saved to disk.
+```{r}
+infercnv_obj = CreateInfercnvObject(raw_counts_matrix="input_data/ped_midline_gliomas.399cells.p100k.matrix",
+                                     annotations_file="input_data/ped_midline_gliomas.399cells.cell_annots.txt",
+                                     delim="\t",
+                                     gene_order_file="input_data/gencode_v19_gene_pos.txt",
+                                     ref_group_names=c("Oligodendrocyte", "Immune cell"))
+```
+
+
+
+Start the run but stop before the HMM is run to inspect the subclustering. This is done using the up_to_step argument. We use a cutoff of 1 as this is SmartSeq2 data, but with 10X you would use 0.1 . Run time is ~4 minutes
+```{r, results='hide'}
+# help:
+# ?run
+
+infercnv_obj_run = infercnv::run(infercnv_obj,
+                                 cutoff=1, 
+                                 out_dir=output_dir, 
+                                 cluster_by_groups=T,
+                                 HMM=T,
+                                 per_chr_hmm_subclusters=F,
+                                 denoise=T,
+                                 up_to_step = 15
+                                 )
+```
+
+
+Helper method to plot subclusters as annotations.
+```{r, results='hide'}
+plot_subclusters = function(infercnv_obj, out_dir, output_filename) {
+    subcluster_obj = infercnv_obj
+    subcluster_obj@reference_grouped_cell_indices = list()
+    for (grp in names(infercnv_obj@reference_grouped_cell_indices)) {
+        for (grp2 in names(infercnv_obj@tumor_subclusters$subclusters[[grp]])) {
+            subcluster_obj@reference_grouped_cell_indices[[grp2]] = infercnv_obj@tumor_subclusters$subclusters[[grp]][[grp2]]
+        }
+    }
+    
+    subcluster_obj@observation_grouped_cell_indices = list()
+    for (grp in names(infercnv_obj@tumor_subclusters$subclusters)) {
+        for (grp2 in names(infercnv_obj@tumor_subclusters$subclusters[[grp]])) {
+            subcluster_obj@observation_grouped_cell_indices[[grp2]] = infercnv_obj@tumor_subclusters$subclusters[[grp]][[grp2]]
+        }
+    }
+
+    subcluster_obj@tumor_subclusters = NULL
+    
+    plot_cnv(subcluster_obj,
+             cluster_by_groups=TRUE,
+             output_filename = output_filename,
+             out_dir=out_dir,
+             write_expr_matrix=FALSE)
+}
+```
+
+
+Inspect the subclustering using the helper method.
+Also check for signal in the references as that might highlight an issue in the reference selection or how it is annotated. Some narrow regions might show up with both gain and loss signal in certain cell types, most commonly in chromomsome 6 in the MHC genes region. These regions are masked by default during the subclustering.
+```{r}
+# infercnv_step15 = readRDS("output_dir/15_tumor_subclustersHMMi6.leiden.infercnv_obj")
+# plot_subclusters(infercnv_step15, out_dir="output_dir/", output_filename="leiden_subclusters_check")
+
+plot_subclusters(infercnv_obj_run,
+                 out_dir=output_dir,
+                 output_filename="leiden_subclusters_check"
+                 )
+
+knitr::include_graphics(paste0(output_dir, "/leiden_subclusters_check.png"))
+```
+
+
+
+Tweak subclustering settings if needed, then rerun with the new settings, only steps that are affected will be rerun :
+```{r, results='hide'}
+infercnv_obj_run = infercnv::run(infercnv_obj,
+                                 cutoff=1, 
+                                 out_dir=output_dir, 
+                                 cluster_by_groups=T,
+                                 HMM=T,
+                                 per_chr_hmm_subclusters=F,
+                                 denoise=T,
+                                 k_nn=10,
+                                 up_to_step = 15,
+                                 )
+```
+
+
+Inspect the updated subclustering.
+```{r}
+# infercnv_step15 = readRDS("output_dir/15_tumor_subclustersHMMi6.leiden.infercnv_obj")
+# plot_subclusters(infercnv_step15, out_dir="output_dir/", output_filename="leiden_subclusters_check2")
+
+plot_subclusters(infercnv_obj_run,
+                 out_dir=output_dir,
+                 output_filename="leiden_subclusters_check2"
+                 )
+
+knitr::include_graphics(paste0(output_dir, "/leiden_subclusters_check2.png"))
+```
+
+Finish the run by removing the up_to_step option. Runtime is ~8 minutes
+```{r, results='hide'}
+infercnv_obj_run = infercnv::run(infercnv_obj,
+                                 cutoff=1, 
+                                 out_dir=output_dir, 
+                                 cluster_by_groups=T,
+                                 HMM=T,
+                                 per_chr_hmm_subclusters=F,
+                                 denoise=T,
+                                 k_nn=10
+                                 )
+
+knitr::include_graphics(paste0(output_dir, "/infercnv.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv.17_HMM_predHMMi6.leiden.hmm_mode-subclusters.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv.19_HMM_pred.Bayes_Net.Pnorm_0.5.png"))
+```
+
+
+Adjust the Bayesian filtering threshold BayesMaxPNormal (default value is 0.5) for stricter filtering.
+```{r, results='hide'}
+infercnv_obj_run = infercnv::run(infercnv_obj,
+                                 cutoff=1, 
+                                 out_dir=output_dir, 
+                                 cluster_by_groups=T,
+                                 HMM=T,
+                                 per_chr_hmm_subclusters=F,
+                                 BayesMaxPNormal=0.2,
+                                 denoise=T,
+                                 k_nn=10
+                                 )
+
+knitr::include_graphics(paste0(output_dir, "/infercnv.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv.17_HMM_predHMMi6.leiden.hmm_mode-subclusters.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv.19_HMM_pred.Bayes_Net.Pnorm_0.2.png"))
+```
+
+
+Plot the final residual expression figure with different settings and legend.
+```{r, results='hide'}
+# help:
+# ?plot_cnv
+
+plot_cnv(infercnv_obj_run,
+         out_dir = output_dir,
+         title = "infercnv figure",
+         obs_title = "Malignant cells",
+         ref_title = "Normal cells",
+         cluster_by_groups = TRUE,
+         plot_chr_scale = TRUE,
+         color_safe_pal = TRUE,
+         output_filename = "infercnv_scaled_to_chr"
+         )
+
+knitr::include_graphics(paste0(output_dir, "/infercnv_scaled_to_chr.png"))
+```
+
+
+We can plot each group of cells on a separate figure based on their annotations to have less compressed heatmaps.
+```{r, results='hide'}
+plot_per_group(infercnv_obj_run,
+               on_references = FALSE,
+               on_observations = TRUE,
+               sample = FALSE,
+               out_dir = output_dir
+               )
+
+knitr::include_graphics(paste0(output_dir, "/infercnv_per_group_OBS_BCH836_Malignant.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv_per_group_OBS_BCH869_Malignant.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv_per_group_OBS_BCH1126_Malignant.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv_per_group_OBS_MUV1_Malignant.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv_per_group_OBS_MUV5_Malignant.png"))
+knitr::include_graphics(paste0(output_dir, "/infercnv_per_group_OBS_MUV10_Malignant.png"))
+```
+
+
+
+Import the Seurat object and add the infercnv HMM results to it. This step also generated a file "map_metadata_from_infercnv.txt" that contains the same information as a text table.
+```{r}
+# help:
+# ?add_to_seurat
+
+# reload Seurat file from disk if needed
+# ped_midline_gliomas_seurat = readRDS("input_data/ped_midline_gliomas_seurat.rds")
+
+ped_midline_gliomas_seurat_with_hmm = add_to_seurat(seurat_obj = ped_midline_gliomas_seurat,
+                                                    infercnv_output_path = output_dir
+                                                    )
+```
+
+
+Plot the cell annotations used in infercnv on the UMAP included in the Seurat object, in this example, the annotation information is contained in ped_midline_gliomas_seurat_with_hmm@active.identity .
+```{r}
+png(paste0(output_dir, "/annotations.png"), width=1920, height=1920, res=288)
+DimPlot(ped_midline_gliomas_seurat_with_hmm,
+        reduction="umap",
+        # label = TRUE,
+        pt.size=0.5
+        )
+dev.off()
+knitr::include_graphics(paste0(output_dir, "/annotations.png"))
+```
+
+Plot on the umap which cells are predicted by the HMM to have a duplication on chromosome 1, with the intensity scaling with the size of the CNV and the fold level of change. For continuous values we use FeaturePlot() and the "features" argument.
+```{r}
+png(paste0(output_dir, "/proportion_scaled_dupli_chr1.png"), width=1920, height=1920, res=288)
+FeaturePlot(ped_midline_gliomas_seurat_with_hmm,
+            reduction="umap",
+            features="proportion_scaled_dupli_chr1"
+            ) + ggplot2::scale_colour_gradient(low="lightgrey", high="blue", limits=c(0,1))
+dev.off()
+knitr::include_graphics(paste0(output_dir, "/proportion_scaled_dupli_chr1.png"))
+```
+
+
+For discrete values, we use DimPlot with the "group.by" option to determine which information to display.
+```{r}
+png(paste0(output_dir, "/top_loss_1.png"), width=1920, height=1920, res=288)
+DimPlot(ped_midline_gliomas_seurat_with_hmm,
+        reduction="umap",
+        group.by="top_loss_1",
+        pt.size=0.5
+        )
+dev.off()
+knitr::include_graphics(paste0(output_dir, "/top_loss_1.png"))
+```
+
+
+We can display the full list of files generated in the output folder.
+```{r}
+list.files(output_dir)
+```
+
+Files starting with a number and ending with ".infercnv_obj" are the backup objects from each step.
+
+Files starting with 17_ and HMM_ are some of the default HMM and filtered HMM outputs: 
+- ".cell_groupings" files contain clustering information
+- ".pred_cnv_regions.dat" files contain boundaries for each CNV ("region") and the HMM state they are in
+- ".pred_cnv_genes.dat" files contain the list of genes present in each CNV ("region") and the HMM state values
+Step 17 is to run the HMM, and step 19 to filtering the HMM results. 
+
+Each figure has a set of outputs that goes with it, containing clustering information and thresholds for the heatmap colors. As an option, the matrices can also be output to file during plotting.
+
+
+The infercnv wiki contains more details about the method : https://github.com/broadinstitute/infercnv/wiki
+
+
+

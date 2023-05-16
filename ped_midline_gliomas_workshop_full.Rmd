@@ -1,0 +1,291 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Set the root.dir option to the directory of the RMD file
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+Code to install infercnv from BioConductor
+```{r, eval=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#
+## The following initializes usage of Bioc devel
+#BiocManager::install(version='devel')
+#
+#BiocManager::install("infercnv")
+```
+
+Code to update infercnv from Github. 
+```{r, eval=FALSE}
+# devtools::install_github("broadinstitute/infercnv")
+```
+
+
+Load infercnv and Seurat libraries in your R session. The detach() command is only needed so that your current R session updates the version in use if the package was already loaded but an update has been installed.
+```{r}
+if ("infercnv" %in% names(sessionInfo()$otherPkgs)) {
+    detach("package:infercnv", unload=T)
+}
+library(infercnv)
+library(Seurat)
+```
+
+
+Set working directory to data folder and output path
+```{r}
+# setwd("")
+output_dir_full = "output_dir_full"
+```
+
+
+Create the infercnv object from files saved to disk.
+```{r, results='hide', message=FALSE}
+infercnv_obj_full = CreateInfercnvObject(raw_counts_matrix="input_data/ped_midline_gliomas.counts.p100k.matrix.gz",
+                                         annotations_file="input_data/ped_midline_gliomas.cell_annots.txt",
+                                         delim="\t",
+                                         gene_order_file="input_data/gencode_v19_gene_pos.txt",
+                                         ref_group_names=c("Oligodendrocyte", "Immune cell"))
+
+```
+
+Start the run but stop before the HMM is run to inspect the subclustering. This is done using the up_to_step argument. We use a cutoff of 1 as this is SmartSeq2 data, but with 10X you would use 0.1 .
+```{r, results='hide', message=FALSE}
+# help:
+# ?run
+
+infercnv_obj_full_run = infercnv::run(infercnv_obj_full,
+                                 cutoff=1, 
+                                 out_dir=output_dir_full, 
+                                 cluster_by_groups=T,
+                                 HMM=T,
+                                 per_chr_hmm_subclusters=F,
+                                 denoise=T,
+                                 up_to_step = 15
+                                 )
+```
+
+
+Inspect the subclustering and check for signal in the references as that might highlight an issue in the reference selection or how it is annotated. Some narrow regions might show up with both gain and loss signal in certain cell types, most commonly in chromomsome 6 in the MHC genes region. These regions are masked by default during the subclustering.
+
+```{r}
+system(paste("mv", paste0(output_dir_full, "/infercnv.preliminary.png"), paste0(output_dir_full, "/infercnv.preliminary_defaults.png")))
+system(paste("mv", paste0(output_dir_full, "/infercnv_subclusters.png"), paste0(output_dir_full, "/infercnv_subclusters_defaults.png")))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.preliminary_defaults.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_subclusters_defaults.png"))
+```
+
+
+Tweak subclustering settings if needed, then rerun with the new settings, only steps that are affected will be rerun :
+```{r, results='hide', message=FALSE}
+infercnv_obj_full_run = infercnv::run(infercnv_obj_full,
+                                      cutoff=1, 
+                                      out_dir=output_dir_full, 
+                                      cluster_by_groups=T,
+                                      HMM=T,
+                                      per_chr_hmm_subclusters=F,
+                                      denoise=T,
+                                      leiden_resolution = 0.01,
+                                      up_to_step = 15
+                                      )
+```
+
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.preliminary.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_subclusters.png"))
+```
+
+
+Finish the run by removing the up_to_step option.
+```{r, results='hide', message=FALSE}
+infercnv_obj_full_run = infercnv::run(infercnv_obj_full,
+                                      cutoff=1, 
+                                      out_dir=output_dir_full, 
+                                      cluster_by_groups=T,
+                                      HMM=T,
+                                      per_chr_hmm_subclusters=F,
+                                      denoise=T,
+                                      leiden_resolution = 0.01
+                                      )
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.17_HMM_predHMMi6.leiden.hmm_mode-subclusters.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.19_HMM_pred.Bayes_Net.Pnorm_0.5.png"))
+```
+
+
+Adjust the Bayesian filtering threshold BayesMaxPNormal (default value is 0.5) for stricter filtering.
+```{r, results='hide', message=FALSE}
+infercnv_obj_full_run = infercnv::run(infercnv_obj_full,
+                                      cutoff=1, 
+                                      out_dir=output_dir_full, 
+                                      cluster_by_groups=T,
+                                      HMM=T,
+                                      per_chr_hmm_subclusters=F,
+                                      denoise=T,
+                                      leiden_resolution = 0.01,
+                                      BayesMaxPNormal=0.2
+                                      )
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.17_HMM_predHMMi6.leiden.hmm_mode-subclusters.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv.19_HMM_pred.Bayes_Net.Pnorm_0.2.png"))
+```
+
+
+Plot the final residual expression figure with different settings and legend.
+```{r, results='hide', message=FALSE}
+# help:
+# ?plot_cnv
+
+plot_cnv(infercnv_obj_full_run,
+         out_dir = output_dir_full,
+         title = "infercnv figure",
+         obs_title = "Malignant cells",
+         ref_title = "Normal cells",
+         cluster_by_groups = TRUE,
+         plot_chr_scale = TRUE,
+         color_safe_pal = TRUE,
+         output_filename = "infercnv_scaled_to_chr"
+         )
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_scaled_to_chr.png"))
+```
+
+
+We can plot the figure with a taller pixel height so cells are less compressed by using the dynamic_resize option.
+```{r, results='hide', message=FALSE}
+# help:
+# ?plot_cnv
+
+plot_cnv(infercnv_obj_full_run,
+         out_dir = output_dir_full,
+         title = "infercnv figure",
+         obs_title = "Malignant cells",
+         ref_title = "Normal cells",
+         cluster_by_groups = TRUE,
+         plot_chr_scale = FALSE,
+         dynamic_resize = 0.5,
+         color_safe_pal = TRUE,
+         output_filename = "infercnv_bigger"
+         )
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_bigger.png"))
+```
+
+
+We can plot each group of cells on a separate figure based on their annotations to have less compressed heatmaps.
+```{r, results='hide', message=FALSE}
+plot_per_group(infercnv_obj_full_run,
+               on_references = FALSE,
+               on_observations = TRUE,
+               sample = FALSE,
+               out_dir = output_dir_full
+               )
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_per_group_OBS_BCH836_Malignant.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_per_group_OBS_BCH869_Malignant.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_per_group_OBS_BCH1126_Malignant.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_per_group_OBS_MUV1_Malignant.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_per_group_OBS_MUV5_Malignant.png"))
+knitr::include_graphics(paste0(output_dir_full, "/infercnv_per_group_OBS_MUV10_Malignant.png"))
+```
+
+
+
+Import the Seurat object and add the infercnv HMM results to it. This step also generated a file "map_metadata_from_infercnv.txt" that contains the same information as a text table.
+```{r, results='hide', message=FALSE}
+# help:
+# ?add_to_seurat
+
+# reload Seurat file from disk if needed
+ped_midline_gliomas_seurat_full = readRDS("input_data/ped_midline_gliomas_seurat_full.rds")
+
+ped_midline_gliomas_seurat_full_with_hmm = add_to_seurat(seurat_obj = ped_midline_gliomas_seurat_full,
+                                                         infercnv_output_path = output_dir_full
+                                                         )
+```
+
+
+Plot the cell annotations used in infercnv on the UMAP included in the Seurat object, in this example, the annotation information is contained in ped_midline_gliomas_seurat_with_hmm@active.identity .
+```{r, results='hide', message=FALSE}
+png(paste0(output_dir_full, "/annotations.png"), width=1920, height=1440, res=288)
+DimPlot(ped_midline_gliomas_seurat_full_with_hmm,
+        reduction="umap",
+        # label = TRUE,
+        pt.size=0.5
+        )
+dev.off()
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/annotations.png"))
+```
+
+Plot the subcluster calculated by infercnv on the UMAP.
+```{r, results='hide', message=FALSE}
+png(paste0(output_dir_full, "/seurat_with_subclusters.png"), width=1920, height=1440, res=288)
+DimPlot(ped_midline_gliomas_seurat_full_with_hmm,
+        reduction="umap",
+        group.by="infercnv_subcluster",
+        pt.size=0.5
+        )
+dev.off()
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/seurat_with_subclusters.png"))
+```
+
+Plot on the umap which cells are predicted by the HMM to have a duplication on chromosome 1, with the intensity scaling with the size of the CNV and the fold level of change. For continuous values we use FeaturePlot() and the "features" argument.
+```{r, results='hide', message=FALSE}
+png(paste0(output_dir_full, "/proportion_scaled_dupli_chr1.png"), width=1920, height=1440, res=288)
+FeaturePlot(ped_midline_gliomas_seurat_full_with_hmm,
+            reduction="umap",
+            features="proportion_scaled_dupli_chr1"
+            ) + ggplot2::scale_colour_gradient(low="lightgrey", high="blue", limits=c(0,1))
+dev.off()
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/proportion_scaled_dupli_chr1.png"))
+```
+
+
+For discrete values, we use DimPlot with the "group.by" option to determine which information to display.
+```{r, results='hide', message=FALSE}
+png(paste0(output_dir_full, "/top_loss_2.png"), width=1920, height=1440, res=288)
+DimPlot(ped_midline_gliomas_seurat_full_with_hmm,
+        reduction="umap",
+        group.by="top_loss_2",
+        pt.size=0.5
+        )
+dev.off()
+```
+
+```{r}
+knitr::include_graphics(paste0(output_dir_full, "/top_loss_2.png"))
+```
+
+
+
+We can display the full list of files generated in the output folder.
+```{r}
+list.files(output_dir_full)
+```
